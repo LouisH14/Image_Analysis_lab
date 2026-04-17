@@ -1,0 +1,28 @@
+# --- Master Image Analysis Gitignore ---
+
+# Dossiers de données (on bloque tout le contenu)
+data/
+**/data/
+data/**
+
+# Extensions de fichiers lourds (tes fichiers .gz de 3Go sont ici)
+*.gz
+*.zip
+*.tar
+*.7z
+
+# Images (souvent très nombreuses dans les datasets)
+*.png
+*.jpg
+*.jpeg
+*.svg
+
+# Modèles et Poids (Deep Learning)
+*.pth
+*.pt
+*.h5
+
+# Python et Jupyter
+__pycache__/
+.ipynb_checkpoints/
+*.pyc
