@@ -1,0 +1,10 @@
+# Ignore model weights and data files
+*.pth
+*.svg
+
+# Ignore all files in part_02 (if not needed)
+data/data_lab_03/part_02/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
