@@ -40,43 +40,42 @@ def build_card_feature_db(templates_path: str):
     print(f"Database built with {len(feature_db)} cards.")
     return feature_db
 
-def identify_card(query_descriptors, feature_db, hamming_th=40):
+def identify_card(query_descriptors, feature_db, hamming_th=40, minimum_matches_th = 10):
     """
     Compares query descriptors from a table segment against the database.
-    Returns the name of the best matching card.
+    Returns a list of card names that meet the match threshold.
     """
     if query_descriptors is None or not feature_db:
-        return "UNKNOWN"
+        return ["UNKNOWN"]
 
     # ORB uses Hamming distance
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-    
-    best_match_name = "UNKNOWN"
-    max_good_matches = 0
+
+    candidates = []
 
     for card_name, db_descriptors in feature_db.items():
         # Match descriptors
-        matches = bf.match(query_descriptors, db_descriptors)
+        potential_matches = bf.match(query_descriptors, db_descriptors)
         
-        # Sort matches by distance (lower is better)
-        matches = sorted(matches, key=lambda x: x.distance)
+        # Sort potential_matches by distance (lower is better)
+        potential_matches = sorted(potential_matches, key=lambda x: x.distance)
         
-        # Heuristic: filter matches that are "good" (very close)
-        # Or simply count matches. For ORB crossCheck=True, 
-        # the number of returned matches is a strong indicator.
-        good_matches = [m for m in matches if m.distance < hamming_th] # hamming_th found iteratively
+        # among all potential matches, which ones are the good matches
+        good_matches = [m for m in potential_matches if m.distance < hamming_th] # hamming_th found iteratively
         
         num_good = len(good_matches)
         
-        if num_good > max_good_matches:
-            max_good_matches = num_good
-            best_match_name = card_name
+        # Accept any card that meets the minimum match threshold
+        if num_good >= minimum_matches_th: # minimum_matches_th found iteratively too
+            candidates.append((card_name, num_good))
 
-    # Optional: Set a minimum number of matches to avoid false positives
-    if max_good_matches < 10: 
-        return "EMPTY"
+    # Sort candidates by number of good matches (highest first)
+    candidates.sort(key=lambda x: x[1], reverse=True)   
+
+    if not candidates:
+        return ["EMPTY"]
         
-    return best_match_name
+    return [f"{c[0]} ({c[1]})" for c in candidates]
 
 def predict_table_state(im_obj, feature_db, presence_model=None):
     """
@@ -106,7 +105,7 @@ def predict_table_state(im_obj, feature_db, presence_model=None):
         _, descriptors = apply_orb(seg)
         
         # 3. Match against the database
-        card_name = identify_card(descriptors, feature_db)
-        results[positions[i]] = card_name
+        card_list = identify_card(descriptors, feature_db)
+        results[positions[i]] = card_list
             
     return results
