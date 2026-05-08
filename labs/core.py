@@ -1,31 +1,23 @@
-# Import main packages
-import os
-import copy
-import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
-import torch.nn as nn
-import torch.nn.functional as F
-import pandas as pd ########
-
-from pathlib import Path #######
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
 from PIL import Image
-import torch
-from torch.utils.data import Dataset, DataLoader
-from tqdm import tqdm
-from typing import Optional, Callable
-from sklearn.metrics import accuracy_score, f1_score
-from sklearn.covariance import LedoitWolf
-
-
-from utils.lab_03_utils import *
 from enum import IntEnum
+
+# If you use specific functions from lab_03_utils inside the class:
+from utils.lab_03_utils import * 
+
+
+# =============================================================================
+# FAMILY 1: CORE & IMAGE HANDLING
+# =============================================================================
+
 
 BLACK = [0, 0, 0]
 RED = [255, 0, 0]
 GREEN = [0, 255, 0]
 BLUE = [0, 0, 255]
-
 
 class IDX(IntEnum):
     IMAGE_ID = 0
@@ -37,12 +29,9 @@ class IDX(IntEnum):
     PLAYER_4_CARDS = 6
 
 def valid_nb(n):
-    # as we have 81 images
-
     n = 80 if n > 80 else n
     print('colorized background') if n > 41 else print('white background')
     return n
-
 
 class image:
     def __init__(self, image_number): # first image: image_number = 0 
@@ -62,13 +51,11 @@ class image:
         # Drawings
         self.temp = self.original.copy()
 
-
     def show_info(self, idx):
         if idx > 6:
             return self.row
         else:
             return self.row.iloc[idx] 
-    
 
     def display(self, temporary=False):       
         if temporary:
@@ -76,22 +63,17 @@ class image:
         else:
             plt.imshow(self.original)
         
-        
     def get(self, temporary = False):
         if temporary:
             return self.temp.copy()
         else:
             return self.original.copy()
 
-
-
     def draw(self, y_start, y_stop, x_start, x_stop, color):
         self.temp[y_start:y_stop, x_start:x_stop] = color
 
-
     def erease_drawings(self):
         self.temp = self.original.copy()
-
 
     def segment(self, no_player):
         if no_player == 1:
@@ -116,77 +98,3 @@ class image:
             return seg
         else:
             print('no player not valid')
-
-    
-
-def determine_active_player(self):
-
-    return 0
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-TH_EMPTY = 10
-
-def search_present(im): #only for white background
-    players = [False, False, False, False]
-
-    for i in range(4):
-        if np.std(im.segment(i+1))>TH_EMPTY:
-            players[i] = True 
-        else:
-            players[i] = False
-    
-    return players
-
-def verify_guess(guess, answer):
-    result = True
-
-    if (guess==True) and (answer == "EMPTY"):
-        result = False
-    if (guess==False) and (answer != "EMPTY"):
-        result = False
-
-    return result
-    
-
-def TEST_search_present():
-
-    for j in range(41):
-        im = image(j)
-        players = search_present(im)
-
-        for i in range(4):
-            guess = players[i]
-            answer = im.show_info(IDX.PLAYER_1_CARDS+i)
-            if (not verify_guess(guess, answer)):
-                print(f"image no: {j} guess: {guess}, answer: {answer}")
-    
-    print("test finito")
-
-
-def TEST_determine_active_player():
-    for j in range(81):
-        im = image(j)
-        guess = determine_active_player(im)
-        answer = im.show_info(IDX.ACTIVE_PLAYER)
-
-        # Simple check: see if the guessed player number is in the ground truth string
-        if str(guess) not in str(answer):
-            print(f"image no: {j} guess: {guess}, answer: {answer}")
-    print("test active player finito")
