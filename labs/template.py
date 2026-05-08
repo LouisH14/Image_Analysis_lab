@@ -40,7 +40,7 @@ def build_card_feature_db(templates_path: str):
     print(f"Database built with {len(feature_db)} cards.")
     return feature_db
 
-def identify_card(query_descriptors, feature_db, ratio_threshold=0.75):
+def identify_card(query_descriptors, feature_db, hamming_th=40):
     """
     Compares query descriptors from a table segment against the database.
     Returns the name of the best matching card.
@@ -64,7 +64,7 @@ def identify_card(query_descriptors, feature_db, ratio_threshold=0.75):
         # Heuristic: filter matches that are "good" (very close)
         # Or simply count matches. For ORB crossCheck=True, 
         # the number of returned matches is a strong indicator.
-        good_matches = [m for m in matches if m.distance < 50] # 50 is a common threshold for Hamming
+        good_matches = [m for m in matches if m.distance < hamming_th] # hamming_th found iteratively
         
         num_good = len(good_matches)
         
@@ -74,6 +74,39 @@ def identify_card(query_descriptors, feature_db, ratio_threshold=0.75):
 
     # Optional: Set a minimum number of matches to avoid false positives
     if max_good_matches < 10: 
-        return "UNKNOWN"
+        return "EMPTY"
         
     return best_match_name
+
+def predict_table_state(im_obj, feature_db, presence_model=None):
+    """
+    Analyzes a full table image and identifies cards for all players and the center.
+    
+    Args:
+        im_obj: The 'image' object from core.py.
+        feature_db: The dictionary of card descriptors.
+        presence_model: The trained MahalanobisClassifier (optional).
+    """
+    from presence import search_present
+
+    # 1. Determine which areas actually contain cards
+    # This prevents matching ORB against a plain tablecloth (which produces noise)
+    presence_mask = search_present(im_obj, model=presence_model)
+    
+    results = {}
+    positions = ["Center", "Player 1", "Player 2", "Player 3", "Player 4"]
+
+    for i, is_present in enumerate(presence_mask):
+        """if not is_present:
+            results[positions[i]] = "EMPTY"
+        else: ==> the presence detection wasn't working good"""
+        
+        # 2. Extract 2D segment and descriptors
+        seg = im_obj.segment(i)
+        _, descriptors = apply_orb(seg)
+        
+        # 3. Match against the database
+        card_name = identify_card(descriptors, feature_db)
+        results[positions[i]] = card_name
+            
+    return results

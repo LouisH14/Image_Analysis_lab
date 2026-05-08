@@ -41,7 +41,7 @@ class MahalanobisClassifier:
         """
 
         # Define number of classes
-        n_classes = len(np.unique(np.unique(train_y)))
+        n_classes = len(torch.unique(train_y))
         n, d = train_x.shape
 
         # Set default values
@@ -56,7 +56,8 @@ class MahalanobisClassifier:
         for i in range(n_classes):
             class_x = train_x[train_y == i]
             means[i] = torch.mean(class_x, dim=0)
-            cov = torch.cov(class_x.T)
+            # Add a small epsilon to the diagonal for numerical stability of the matrix inversion
+            cov = torch.cov(class_x.T) + 1e-6 * torch.eye(d, device=train_x.device)
             inv_covs[i] = torch.linalg.inv(cov)
 
         self.means = means
@@ -650,5 +651,3 @@ class AttentionPooling(nn.Module):
 
 
     
-
-

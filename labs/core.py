@@ -18,6 +18,8 @@ BLACK = [0, 0, 0]
 RED = [255, 0, 0]
 GREEN = [0, 255, 0]
 BLUE = [0, 0, 255]
+HEIGHT = 2662
+WIDTH = 4000
 
 class IDX(IntEnum):
     IMAGE_ID = 0
@@ -46,7 +48,7 @@ class image:
         files = sorted(folder.glob("*.*"))
         files = [f for f in files if f.suffix.lower() in [".jpg", ".jpeg"]]
         im = Image.open(files[self.image_number])
-        self.original = np.array(im)
+        self.original = np.array(im.copy())
 
         # Drawings
         self.temp = self.original.copy()
@@ -71,30 +73,28 @@ class image:
 
     def draw(self, y_start, y_stop, x_start, x_stop, color):
         self.temp[y_start:y_stop, x_start:x_stop] = color
+        """border_thickness = 15 # Adjust as needed
+        # Top border
+        self.temp[y_start:min(y_start + border_thickness, y_stop), x_start:x_stop] = color
+        # Bottom border
+        self.temp[max(y_start, y_stop - border_thickness):y_stop, x_start:x_stop] = color
+        # Left and Right borders (avoid overwriting corners if thickness is high)
+        self.temp[y_start:y_stop, x_start:min(x_start + border_thickness, x_stop)] = color
+        self.temp[y_start:y_stop, max(x_start, x_stop - border_thickness):x_stop] = color"""
 
     def erease_drawings(self):
         self.temp = self.original.copy()
 
     def segment(self, no_player):
+        if no_player == 0: # Center Card
+            return self.original[HEIGHT//4:HEIGHT*3//4, WIDTH//4:WIDTH*3//4].copy()
         if no_player == 1:
-            seg = np.hstack([
-                self.original[2200, 1500:2500].copy(),
-                self.original[2000, 1500:2500].copy()])
-            return seg
+            return self.original[HEIGHT//2 +200:HEIGHT, 900:WIDTH-700].copy()
         if no_player == 2:
-            seg = np.hstack([
-                self.original[800:1800, 3100].copy(),
-                self.original[800:1800, 3600].copy()])
-            return seg
+            return self.original[0:HEIGHT-500, WIDTH-1100:WIDTH].copy() # not symmetric as the object indicating the active player is always at right
         if no_player == 3:
-            seg = np.hstack([
-                self.original[250, 1500:2500].copy(),
-                self.original[750, 1500:2500].copy()])
-            return seg
+            return self.original[0:HEIGHT//2 -200, 900:WIDTH-900].copy()
         if no_player == 4:
-            seg = np.hstack([
-                self.original[800:1800, 300].copy(),
-                self.original[800:1800, 800].copy()])
-            return seg
+            return self.original[600:HEIGHT-300, 0:WIDTH//2 -600].copy()
         else:
             print('no player not valid')
