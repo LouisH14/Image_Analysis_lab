@@ -12,6 +12,8 @@ import core
 import features
 import presence
 import template
+import lab1
+from skimage.morphology import binary_dilation
 
 #from UNO import * ###
 from pathlib import Path #######
@@ -22,115 +24,113 @@ from tqdm import tqdm
 from typing import Optional, Callable
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.covariance import LedoitWolf
-
-
 from utils.lab_03_utils import *
 
-def order_points(pts):
-    """
-    Orders 4 points in the order: top-left, top-right, bottom-right, bottom-left.
-    """
-    rect = np.zeros((4, 2), dtype="float32")
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)] # Top-left has smallest sum
-    rect[2] = pts[np.argmax(s)] # Bottom-right has largest sum
 
-    diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)] # Top-right has smallest difference
-    rect[3] = pts[np.argmax(diff)] # Bottom-left has largest difference
-    return rect
+def test_alakon(int):
+    return int+1
 
-def four_point_transform(image, pts):
-    """
-    Applies a perspective transform to a region defined by 4 points to get a top-down view.
-    """
-    rect = order_points(pts)
-    (tl, tr, br, bl) = rect
+print("isolate.py loaded")
 
-    # Standard Uno Card dimensions (approx 2:3 ratio)
-    dst_width = 300
-    dst_height = 450
-
-    dst = np.array([
-        [0, 0],
-        [dst_width - 1, 0],
-        [dst_width - 1, dst_height - 1],
-        [0, dst_height - 1]], dtype="float32")
-
-    M = cv2.getPerspectiveTransform(rect, dst)
-    warped = cv2.warpPerspective(image, M, (dst_width, dst_height))
-    return warped
-
-def find_card_contours(image_np, min_area=100000, max_area=1500000):
+def find_card_contours(im_obj, min_area=50000, max_area=2000000):
     """
     Detects potential card contours in the image based on shape and area.
-    Incorporates thresholding and morphology concepts from lab2.py.
+    Uses HSV extraction and morphology from lab1.py.
     """
-    if len(image_np.shape) == 3:
-        gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-    else:
-        gray = image_np
-
-    # Preprocessing: Blur to reduce noise
-    blurred = cv2.GaussianBlur(gray, (7, 7), 0)
+    image_np = im_obj.get()
     
-    # Use Otsu's Thresholding (similar to the logic in lab2.py preprocess)
-    # This is more robust than Canny for cards on a table
-    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-    # Morphological operations (Closing/Opening) to solidify the card shape
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
-    morphed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-    morphed = cv2.morphologyEx(morphed, cv2.MORPH_OPEN, kernel)
-
-    contours, _ = cv2.findContours(morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # 1. Extract HSV channels using the lab1 utility function
+    h, s, v = lab1.extract_hsv_channels(image_np)
+    
+    # 2. Differentiate white background. 
+    # A white background typically has high Value (V) and low Saturation (S).
+    # We look for regions that are either saturated (colors) or darker (shadows/ink).
+    mask = (s > 0.1) | (v < 0.9)
+    
+    # 3. Clean up the mask using the morphology pipeline from lab1.py
+    mask_morph = lab1.apply_morphology(mask.astype(np.uint8))
+    
+    # 4. Find contours using OpenCV
+    # RETR_EXTERNAL gets the outer boundaries (the cards)
+    contours, _ = cv2.findContours(mask_morph.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     card_contours = []
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        peri = cv2.arcLength(cnt, True)
-        approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
-        
-        # Filter by area and rectangularity (f_rect logic from lab2.py)
-        if min_area < area < max_area and len(approx) >= 4:
-            x, y, w, h = cv2.boundingRect(approx)
-            rect_ratio = area / (w * h)
-            if rect_ratio > 0.7:  # A card should fill most of its bounding box
+        # Filter by expected card size
+        if min_area < area < max_area:
+            peri = cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+            
+            # Uno cards are quadrilaterals (exactly 4 points after approximation)
+            if len(approx) == 4:
                 card_contours.append(approx.reshape(4, 2))
                 
     return card_contours
 
-def extract_isolated_cards(im_obj):
-    """
-    Main entry point: finds all cards in an image object and returns 
-    a list of rectified (warped) card images.
-    """
-    original_img = im_obj.get()
-    contours = find_card_contours(original_img)
-    
-    isolated_cards = []
-    for pts in contours:
-        warped = four_point_transform(original_img, pts)
-        isolated_cards.append(warped)
-        
-    return isolated_cards
-
 def visualize_isolation(im_obj):
     """
-    Helper to visualize the result of the isolation process.
+    Helper function to visualize the detected cards.
     """
-    cards = extract_isolated_cards(im_obj)
-    if not cards:
-        print("No cards detected.")
-        return
-
-    fig, axes = plt.subplots(1, len(cards), figsize=(15, 5))
-    if len(cards) == 1: axes = [axes]
-    for i, card in enumerate(cards):
-        axes[i].imshow(card)
-        axes[i].axis('off')
+    contours = find_card_contours(im_obj)
+    img_draw = im_obj.get()
+    
+    if not contours:
+        print("No cards detected")
+    else:
+        for cnt in contours:
+            cv2.drawContours(img_draw, [cnt.astype(np.int32)], -1, (0, 255, 0), 15)
+            
+    plt.figure(figsize=(12, 8))
+    plt.imshow(img_draw)
+    plt.title(f"Detected {len(contours)} cards")
+    plt.axis('off')
     plt.show()
 
+def region_growing(seeds: list[tuple], img: np.ndarray, n_max: int = 2000, **kwargs):
+    """
+    Run region growing on input image using seed points, adapted for Uno cards 
+    on a white background.
 
+    Args
+    ----
+    seeds: list of tuple
+        List of seed points (row, col)
+    img: np.ndarray (M, N, C)
+        RGB image
+    n_max: int
+        Number maximum of iterations (higher than lab1 to cover large cards)
+    **kwargs:
+        's_thresh' (float): Saturation threshold (default 0.1)
+        'v_thresh' (float): Value threshold (default 0.9)
 
-print("isolate.py loaded")
+    Return
+    ------
+    rg: np.ndarray (M, N)
+        Binary mask of the grown region
+    """
+    M, N, _ = img.shape
+    rg = np.zeros((M, N)).astype(bool)
+
+    # Use HSV extraction from lab1.py to differentiate cards from white table
+    _, s, v = lab1.extract_hsv_channels(img)
+    
+    # Thresholds adapted for white background: grow into colorful or darker pixels
+    s_thresh = kwargs.get('s_thresh', 0.1)
+    v_thresh = kwargs.get('v_thresh', 0.9)
+    is_card = (s > s_thresh) | (v < v_thresh)
+    
+    for r, c in seeds:
+        if 0 <= r < M and 0 <= c < N:
+            rg[r, c] = True
+
+    for i in range(n_max):
+        rg_dilated = binary_dilation(rg)
+        rg_new = rg_dilated & (rg == False)
+        rg_added = rg_new & is_card
+        
+        if not np.any(rg_added):
+            break
+        rg = rg | rg_added
+
+    return rg
