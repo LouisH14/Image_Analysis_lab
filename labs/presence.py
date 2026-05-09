@@ -58,8 +58,8 @@ def train_presence_classifier(num_train_images=10):
     for i in range(num_train_images):
         im = image(i)
         for p in range(5): # 0 (center) to 4 (players)
-            seg = im.segment(p)
-            feat = extract_presence_features(seg)
+            area = im.area(p)
+            feat = extract_presence_features(area)
             
             # Label 0 for EMPTY, 1 for CARD PRESENT
             if p == 0:

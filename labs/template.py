@@ -77,7 +77,7 @@ def identify_card(query_descriptors, feature_db, hamming_th=40, minimum_matches_
         
     return [f"{c[0]} ({c[1]})" for c in candidates]
 
-def predict_table_state(im_obj, feature_db, presence_model=None):
+def predict_table_state(im_obj, feature_db, presence_model=None, max_number_values = 6):
     """
     Analyzes a full table image and identifies cards for all players and the center.
     
@@ -96,6 +96,7 @@ def predict_table_state(im_obj, feature_db, presence_model=None):
     positions = ["Center", "Player 1", "Player 2", "Player 3", "Player 4"]
 
     for i, is_present in enumerate(presence_mask):
+
         """if not is_present:
             results[positions[i]] = "EMPTY"
         else: ==> the presence detection wasn't working good"""
@@ -106,6 +107,6 @@ def predict_table_state(im_obj, feature_db, presence_model=None):
         
         # 3. Match against the database
         card_list = identify_card(descriptors, feature_db)
-        results[positions[i]] = card_list
+        results[positions[i]] = card_list[:max_number_values]
             
     return results

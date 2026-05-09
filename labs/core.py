@@ -85,15 +85,15 @@ class image:
     def erease_drawings(self):
         self.temp = self.original.copy()
 
-    def segment(self, no_player):
+    def area(self, no_player):
         if no_player == 0: # Center Card
             return self.original[HEIGHT//4:HEIGHT*3//4, WIDTH//4:WIDTH*3//4].copy()
         if no_player == 1:
-            return self.original[HEIGHT//2 +200:HEIGHT, 900:WIDTH-700].copy()
+            return self.original[HEIGHT//2 +300:HEIGHT, 900:WIDTH-700].copy()
         if no_player == 2:
             return self.original[0:HEIGHT-500, WIDTH-1100:WIDTH].copy() # not symmetric as the object indicating the active player is always at right
         if no_player == 3:
-            return self.original[0:HEIGHT//2 -200, 900:WIDTH-900].copy()
+            return self.original[0:HEIGHT//2 -300, 900:WIDTH-900].copy()
         if no_player == 4:
             return self.original[600:HEIGHT-300, 0:WIDTH//2 -600].copy()
         else:
