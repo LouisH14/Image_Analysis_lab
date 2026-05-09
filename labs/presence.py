@@ -14,7 +14,7 @@ TH_EMPTY = 10
 
 def determine_active_player(im_obj, model=None):
     """
-    Identifies which player is active based on card presence in their segment.
+    Identifies which player is active based on card presence in their area.
     """
     presence = search_present(im_obj, model=model)
     player_presence = presence[1:] # Exclude the center card (index 0)
@@ -86,17 +86,17 @@ def search_present(im, model=None):
     presence_results = [False] * 5 # [Center, P1, P2, P3, P4]
 
     for i in range(5):
-        seg = im.segment(i)
+        area = im.area(i)
         
         if current_model is not None:
             # ML approach
-            feat = extract_presence_features(seg)
+            feat = extract_presence_features(area)
             feat_tensor = torch.tensor(feat, dtype=torch.float32).unsqueeze(0)
             preds, _ = current_model.predict(feat_tensor)
             presence_results[i] = bool(preds[0].item() == 1)
         else:
             # Heuristic approach (fallback)
-            if np.std(seg) > TH_EMPTY:
+            if np.std(area) > TH_EMPTY:
                 presence_results[i] = True 
             else:
                 presence_results[i] = False
@@ -147,7 +147,7 @@ def TEST_search_present(model=None, num_train_images=41, num_total_images=81):
     f1 = f1_score(all_answers, all_guesses)
     
     print(f"\n--- Presence Detection Test Results ---")
-    print(f"Total Segments Tested: {len(all_guesses)}")
+    print(f"Total Areas Tested: {len(all_guesses)}")
     print(f"Accuracy: {accuracy:.4f}")
     print(f"F1-Score: {f1:.4f}")
     print("---------------------------------------")
