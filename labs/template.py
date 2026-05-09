@@ -40,58 +40,83 @@ def build_card_feature_db(templates_path: str):
     print(f"Database built with {len(feature_db)} cards.")
     return feature_db
 
-def identify_card(query_descriptors, query_kps, feature_db, hamming_th=40, minimum_matches_th = 10):
+def identify_card(query_descriptors, query_kps, feature_db, hamming_th=40, minimum_matches_th=10, max_iterations=5):
     """
     Compares query descriptors from a table area against the database.
-    Uses RANSAC to verify the geometric consistency of the matches.
+    Uses Iterative RANSAC (Method 1) to identify multiple cards by isolating their features.
     """
-    if query_descriptors is None or not feature_db:
+    if query_descriptors is None or len(query_descriptors) < minimum_matches_th or not feature_db:
         return ["UNKNOWN"]
 
-    # ORB uses Hamming distance. crossCheck ensures mutual best matches.
+    # Force descriptors to be a numpy array to support boolean indexing/masking
+    curr_descriptors = np.array(query_descriptors)
+    curr_kps = list(query_kps)
+    
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-    candidates = []
+    found_cards = []
 
-    for card_name, data in feature_db.items():
-        # Defensive check: ensure data is in the new dictionary format
-        if isinstance(data, dict):
-            db_descriptors = data["descriptors"]
-            db_kps = data["keypoints"]
+    for _ in range(max_iterations):
+        if len(curr_descriptors) < minimum_matches_th:
+            break
+
+        best_candidate = None
+        best_inlier_count = 0
+        best_inlier_indices = []
+
+        for card_name, data in feature_db.items():
+            # Support both new dictionary format and legacy array format
+            if isinstance(data, dict):
+                db_descriptors = data.get("descriptors")
+                db_kps = data.get("keypoints")
+            else:
+                db_descriptors = data
+                db_kps = None
+
+            if db_descriptors is None or len(db_descriptors) == 0:
+                continue
+
+            matches = bf.match(curr_descriptors, db_descriptors)
+            good_matches = [m for m in matches if m.distance < hamming_th]
+            
+            # Verification using RANSAC (only if KeyPoints are available for both)
+            if db_kps is not None and len(good_matches) >= max(4, minimum_matches_th):
+                src_pts = np.float32([db_kps[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+                dst_pts = np.float32([curr_kps[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+                
+                _, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+                
+                if mask is not None:
+                    num_inliers = int(np.sum(mask))
+                    if num_inliers > best_inlier_count:
+                        best_inlier_count = num_inliers
+                        best_candidate = card_name
+                        best_inlier_indices = [good_matches[i].queryIdx for i, val in enumerate(mask.ravel()) if val]
+            
+            # Fallback if RANSAC is not possible (no KeyPoints in DB)
+            elif db_kps is None and len(good_matches) >= minimum_matches_th:
+                if len(good_matches) > best_inlier_count:
+                    best_inlier_count = len(good_matches)
+                    best_candidate = card_name
+                    best_inlier_indices = [m.queryIdx for m in good_matches]
+
+        if best_candidate and best_inlier_count >= minimum_matches_th:
+            found_cards.append(f"{best_candidate} ({best_inlier_count})")
+            
+            remaining_mask = np.ones(len(curr_descriptors), dtype=bool)
+            # Mark the query indices used by the best match for removal
+            for idx in best_inlier_indices:
+                if idx < len(remaining_mask):
+                    remaining_mask[idx] = False
+            
+            curr_descriptors = curr_descriptors[remaining_mask]
+            curr_kps = [curr_kps[i] for i, is_val in enumerate(remaining_mask) if is_val]
         else:
-            # Fallback for old database format (no RANSAC possible)
-            db_descriptors = data
-            db_kps = None
+            break
 
-        # Find matches
-        matches = bf.match(query_descriptors, db_descriptors)
-        
-        # Filter by quality
-        good_matches = [m for m in matches if m.distance < hamming_th]
-        
-        # Geometric verification requires at least 4 matches to calculate perspective
-        if db_kps is not None and query_kps is not None and len(good_matches) >= max(4, minimum_matches_th):
-            src_pts = np.float32([db_kps[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-            dst_pts = np.float32([query_kps[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-            
-            # RANSAC filters out "outliers" (matches that don't fit the card's plane)
-            _, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-            
-            if mask is not None:
-                # We count only the inliers (mathematically consistent matches)
-                num_inliers = np.sum(mask)
-                if num_inliers >= minimum_matches_th:
-                    candidates.append((card_name, int(num_inliers)))
-        elif len(good_matches) >= minimum_matches_th:
-            # Fallback count if RANSAC is not possible
-            candidates.append((card_name, len(good_matches)))
-
-    # Sort candidates by number of good matches (highest first)
-    candidates.sort(key=lambda x: x[1], reverse=True)   
-
-    if not candidates:
+    if not found_cards:
         return ["EMPTY"]
-        
-    return [f"{c[0]} ({c[1]})" for c in candidates]
+
+    return found_cards
 
 def predict_table_state(im_obj, feature_db, presence_model=None, max_number_values = 6, match_threshold = 20):
     """
