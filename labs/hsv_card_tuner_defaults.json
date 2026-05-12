@@ -1,0 +1,10 @@
+{
+  "lower_h": 0,
+  "lower_s": 101,
+  "lower_v": 0,
+  "upper_h": 179,
+  "upper_s": 255,
+  "upper_v": 255,
+  "kernel_size": 11,
+  "morph_op": "close"
+}
