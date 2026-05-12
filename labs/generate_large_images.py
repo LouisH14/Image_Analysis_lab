@@ -100,7 +100,7 @@ def main():
         help="Dossier source des images à coller",
     )
     p.add_argument("--out_dir", default="data/images_generee", help="Dossier de sortie")
-    p.add_argument("--count", type=int, default=1, help="Nombre d'images générées")
+    p.add_argument("--count", type=int, default=50, help="Nombre d'images générées")
     p.add_argument(
         "--per_image",
         type=int,
