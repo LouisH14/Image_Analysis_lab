@@ -1,4 +1,5 @@
 import numpy as np
+import cv2
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -125,3 +126,29 @@ def drawing(img, y_start, y_stop, x_start, x_stop, color, border_thickness=15):
     im[y_start:y_stop, max(x_start, x_stop - border_thickness):x_stop] = color
 
     return im
+
+def plot_hsv(im):
+    hsv = cv2.cvtColor(im, cv2.COLOR_RGB2HSV) 
+
+    # Step 2 — Background Subtraction
+    # Goal: Produce a binary mask where white pixels represent "card" or "border".
+    h = hsv[:, :, 0]
+    s = hsv[:, :, 1]
+    v = hsv[:, :, 2]
+
+    plt.figure(figsize=(16, 8)) 
+    plt.subplot(1, 3, 1)
+    plt.title("hue")
+    plt.imshow(h)
+    plt.axis('off')
+
+    plt.subplot(1, 3, 2)
+    plt.title("saturation")
+    plt.imshow(s)
+    plt.axis('off')
+
+    plt.subplot(1, 3, 3)
+    plt.title(f"value")
+    plt.imshow(v)
+    plt.axis('off')
+    plt.show()

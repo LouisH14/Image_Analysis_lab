@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+import core
 
 def isolate_cards(zone_crop):
     """
@@ -134,17 +135,15 @@ def isolate_cards_new(zone_crop, white_background=True, plot_debug=False):
         # Case 1: White background. Threshold on saturation.
         # The colored interior of the card is highly saturated compared to the background.
         _, mask = cv2.threshold(s, 90, 255, cv2.THRESH_BINARY) # (im, threshold, value given to pixel>threshold, thresholding type)
+        # Closing (Dilation followed by Erosion): fills small holes and connects fragments.
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     else:
         # Case 2: Patterned background. Threshold on high value + low saturation.
         # This captures the white border of the cards.
         mask = cv2.inRange(hsv, (0, 0, 200), (179, 60, 255))
-
-    # Step 3 — Morphological Cleanup
-    # We use an elliptical kernel (structuring element) similar to 'disk' in lab1.
     
-    # Closing (Dilation followed by Erosion): fills small holes and connects fragments.
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    
 
     #mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     # Opening (Erosion followed by Dilation): removes small isolated noise blobs.
@@ -155,12 +154,20 @@ def isolate_cards_new(zone_crop, white_background=True, plot_debug=False):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     # We calculate properties for each contour to prepare for filtering.
+    im = zone_crop.copy()
     candidates = []
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
+        rect_rotate = cv2.minAreaRect(cnt) 
+        box = cv2.boxPoints(rect_rotate)
+        box = np.int32(box)
         area = cv2.contourArea(cnt)
+        if area > 20000:
+            cv2.drawContours(im, [box], 0, (0, 255, 0), 2)
         aspect_ratio = float(w) / h if h > 0 else 0
         candidates.append({'contour': cnt, 'bbox': (x, y, w, h), 'area': area, 'aspect_ratio': aspect_ratio})
+        
+
 
     if plot_debug:
         plt.figure(figsize=(24, 8)) # Made the plot bigger
@@ -185,4 +192,4 @@ def isolate_cards_new(zone_crop, white_background=True, plot_debug=False):
         plt.axis('off')
         plt.show()
 
-    return []
+    return [], im
