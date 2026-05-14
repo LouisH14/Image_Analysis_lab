@@ -219,10 +219,6 @@ def mask_rectangles(img, rects):
             box = cv2.boxPoints(rect)
             box = np.int32(box)
             cv2.fillPoly(mask, [box], 255)
-        # Check if it's an axis-aligned rectangle: (x, y, w, h)
-        elif len(rect) == 4:
-            x, y, w, h = map(int, rect)
-            cv2.rectangle(mask, (x, y), (x + w, y + h), 255, -1)
     
     # Bitwise AND keeps only pixels where the mask is white (255)
     return cv2.bitwise_and(img, img, mask=mask)
