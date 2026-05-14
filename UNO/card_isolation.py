@@ -157,15 +157,16 @@ def isolate_cards_new(zone_crop, white_background=True, plot_debug=False):
     im = zone_crop.copy()
     candidates = []
     for cnt in contours:
-        x, y, w, h = cv2.boundingRect(cnt)
         rect_rotate = cv2.minAreaRect(cnt) 
         box = cv2.boxPoints(rect_rotate)
         box = np.int32(box)
-        area = cv2.contourArea(cnt)
-        if area > 20000:
+
+        w, h = rect_rotate[1]
+        rect_area = rect_rotate[1][0] * rect_rotate[1][1]
+
+        if rect_area > 75000:
             cv2.drawContours(im, [box], 0, (0, 255, 0), 2)
-        aspect_ratio = float(w) / h if h > 0 else 0
-        candidates.append({'contour': cnt, 'bbox': (x, y, w, h), 'area': area, 'aspect_ratio': aspect_ratio})
+            candidates.append(rect_rotate)#{'contour': cnt, 'Rect': rect_rotate, 'area': rect_area, 'aspect_ratio': aspect_ratio})
         
 
 
@@ -192,4 +193,36 @@ def isolate_cards_new(zone_crop, white_background=True, plot_debug=False):
         plt.axis('off')
         plt.show()
 
-    return [], im
+    return candidates, im
+
+
+def mask_rectangles(img, rects):
+    """
+    Keeps only pixels inside rects
+    
+    Args:
+        img: image entry (numpy array)
+        rects: list of rectangles ((center_x, center_y), (w, h), angle)
+    
+    Returns:
+        image masked
+    """
+    if img is None or not rects:
+        return np.zeros_like(img) if img is not None else None
+
+    # Create an empty black mask of the same spatial dimensions as the image
+    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    
+    for rect in rects:
+        # Check if it's a rotated rectangle: ((center_x, center_y), (w, h), angle)
+        if isinstance(rect[0], (tuple, list, np.ndarray)) and len(rect) == 3:
+            box = cv2.boxPoints(rect)
+            box = np.int32(box)
+            cv2.fillPoly(mask, [box], 255)
+        # Check if it's an axis-aligned rectangle: (x, y, w, h)
+        elif len(rect) == 4:
+            x, y, w, h = map(int, rect)
+            cv2.rectangle(mask, (x, y), (x + w, y + h), 255, -1)
+    
+    # Bitwise AND keeps only pixels where the mask is white (255)
+    return cv2.bitwise_and(img, img, mask=mask)
