@@ -216,7 +216,12 @@ def mask_rectangles(img, rects):
     for rect in rects:
         # Check if it's a rotated rectangle: ((center_x, center_y), (w, h), angle)
         if isinstance(rect[0], (tuple, list, np.ndarray)) and len(rect) == 3:
-            box = cv2.boxPoints(rect)
+            center, size, angle = rect
+            w, h = size
+            h = h*1.15
+            w = w*1.15
+            rect_aug = (center, (w, h), angle)
+            box = cv2.boxPoints(rect_aug)
             box = np.int32(box)
             cv2.fillPoly(mask, [box], 255)
     
