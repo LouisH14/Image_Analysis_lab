@@ -128,10 +128,8 @@ def drawing(img, y_start, y_stop, x_start, x_stop, color, border_thickness=15):
     return im
 
 def plot_hsv(im):
-    hsv = cv2.cvtColor(im, cv2.COLOR_RGB2HSV) 
+    hsv = cv2.cvtColor(im, cv2.COLOR_RGB2YUV) 
 
-    # Step 2 — Background Subtraction
-    # Goal: Produce a binary mask where white pixels represent "card" or "border".
     h = hsv[:, :, 0]
     s = hsv[:, :, 1]
     v = hsv[:, :, 2]
@@ -149,6 +147,30 @@ def plot_hsv(im):
 
     plt.subplot(1, 3, 3)
     plt.title(f"value")
+    plt.imshow(v)
+    plt.axis('off')
+    plt.show()
+
+def plot_yuv(im):
+    yuv = cv2.cvtColor(im, cv2.COLOR_RGB2YUV) 
+
+    y = yuv[:, :, 0]
+    u = yuv[:, :, 1]
+    v = yuv[:, :, 2]
+
+    plt.figure(figsize=(16, 8)) 
+    plt.subplot(1, 3, 1)
+    plt.title("Luma")
+    plt.imshow(y)
+    plt.axis('off')
+
+    plt.subplot(1, 3, 2)
+    plt.title("Chroma U")
+    plt.imshow(u)
+    plt.axis('off')
+
+    plt.subplot(1, 3, 3)
+    plt.title(f"Chroma V")
     plt.imshow(v)
     plt.axis('off')
     plt.show()
