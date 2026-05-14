@@ -5,6 +5,8 @@ import core
 
 from scipy.ndimage import gaussian_filter1d
 
+TH_ISOLATE_CARDE_WHITEBCK = 75000
+TH_ISOLATE_CARDE_NOISYBCK = 220000
 
 def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=75000):
     """
@@ -26,32 +28,58 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
         # On white backgrounds, colored card interiors have high saturation
         s = hsv[:, :, 1]
         _, mask = cv2.threshold(s, 90, 255, cv2.THRESH_BINARY) 
+
+        # Step 3: Morphological Cleanup - bridge gaps in the detected border
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        # Step 4: Contour Detection
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        # Step 5 & 6: Filtering and Candidate Extraction
+        im = zone_crop.copy()
+        candidates = []
+        contours_kept = []
+
+        for i, cnt in enumerate(contours):
+            rect_rotate = cv2.minAreaRect(cnt) 
+            w, h = rect_rotate[1]
+            rect_area = w * h
+
+            if rect_area > TH_ISOLATE_CARDE_WHITEBCK:
+                box = np.int32(cv2.boxPoints(rect_rotate))
+                cv2.drawContours(im, [box], 0, (0, 255, 0), 2)
+                candidates.append(rect_rotate)
+                contours_kept.append(cnt) # to discard contours attached to cards from other players (that appear on the border of the region)
+        
     else: # the background has colorized patterns
         # On patterned backgrounds, white card borders have low saturation and high value
         mask = cv2.inRange(hsv, (0, 0, 180), (179, 60, 255))
 
-    # Step 3: Morphological Cleanup - bridge gaps in the detected border
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        # Step 3: Morphological Cleanup - bridge gaps in the detected border
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (13, 13))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
-    # Step 4: Contour Detection
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Step 4: Contour Detection
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        #contours = keep_rectangular_contours(contours, epsilon_factor=0.9, min_area=1)
 
-    # Step 5 & 6: Filtering and Candidate Extraction
-    im = zone_crop.copy()
-    candidates = []
-    contours_kept = []
+        # Step 5 & 6: Filtering and Candidate Extraction
+        im = zone_crop.copy()
+        candidates = []
+        contours_kept = []
 
-    for i, cnt in enumerate(contours):
-        rect_rotate = cv2.minAreaRect(cnt) 
-        w, h = rect_rotate[1]
-        rect_area = w * h
+        for i, cnt in enumerate(contours):
+            rect_rotate = cv2.minAreaRect(cnt) 
+            w, h = rect_rotate[1]
+            rect_area = w * h
 
-        if rect_area > threshold:
-            box = np.int32(cv2.boxPoints(rect_rotate))
-            cv2.drawContours(im, [box], 0, (0, 255, 0), 2)
-            candidates.append(rect_rotate)
-            contours_kept.append(cnt) # to discard contours attached to cards from other players (that appear on the border of the region)
+            if rect_area > TH_ISOLATE_CARDE_WHITEBCK and rect_area < threshold:
+                box = np.int32(cv2.boxPoints(rect_rotate))
+                cv2.drawContours(im, [box], 0, (0, 255, 0), 2)
+                candidates.append(rect_rotate)
+                contours_kept.append(cnt) # to discard contours attached to cards from other players (that appear on the border of the region)
+
 
     if plot_debug:
         plt.figure(figsize=(24, 8)) # Made the plot bigger
@@ -205,7 +233,7 @@ def crop_filled_forms(image, contours, padding=50):
             x2 = min(x + w + padding, image.shape[1])
             y2 = min(y + h + padding, image.shape[0])
 
-            """#Create a filled mask for this contour only
+            """Create a filled mask for this contour only
             mask = np.zeros(image.shape[:2], dtype=np.uint8)
             cv2.drawContours(mask, [cnt], -1, 255, thickness=cv2.FILLED)
 
@@ -217,3 +245,22 @@ def crop_filled_forms(image, contours, padding=50):
             crops.append(crop)
 
     return crops
+
+def keep_rectangular_contours(contours, epsilon_factor=0.05, min_area=1000):
+    """Keep only contours that approximate to a rectangle (4 vertices)."""
+    rectangular_cnt = []
+    
+    for cnt in contours:
+        # Skip tiny contours
+        if cv2.contourArea(cnt) < min_area:
+            continue
+        
+        # Approximate the contour to a polygon
+        epsilon = epsilon_factor * cv2.arcLength(cnt, True)
+        approx = cv2.approxPolyDP(cnt, epsilon, True)
+        
+        # A rectangle has 4 vertices
+        if len(approx) == 4:
+            rectangular_cnt.append(cnt)
+    
+    return rectangular_cnt
