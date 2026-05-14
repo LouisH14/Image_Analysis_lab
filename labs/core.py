@@ -40,11 +40,11 @@ class image:
 
         # Written informations
         self.image_number = image_number
-        df = pd.read_csv("../data/train.csv")
+        df = pd.read_csv("../data/iapr-26-uno-vision-challenge/train.csv")
         self.row = df.iloc[image_number]
 
         # Image display 
-        folder = Path("../data/train_images")
+        folder = Path("../data/iapr-26-uno-vision-challenge/train_images")
         files = sorted(folder.glob("*.*"))
         files = [f for f in files if f.suffix.lower() in [".jpg", ".jpeg"]]
         im = Image.open(files[self.image_number])
