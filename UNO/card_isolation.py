@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import core
+import zones
 
 from scipy.ndimage import gaussian_filter1d
 
@@ -22,10 +23,11 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
     if zone_crop is None or zone_crop.size == 0:
         return []
 
-    hsv = cv2.cvtColor(zone_crop, cv2.COLOR_RGB2HSV)   
-    
+    hsv = cv2.cvtColor(zone_crop, cv2.COLOR_RGB2HSV)
+
+    im_with_boxes = zone_crop.copy() # To store the image with drawn boxes
+
     if white_background:
-        # On white backgrounds, colored card interiors have high saturation
         s = hsv[:, :, 1]
         _, mask = cv2.threshold(s, 90, 255, cv2.THRESH_BINARY) 
 
@@ -37,7 +39,6 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         # Step 5 & 6: Filtering and Candidate Extraction
-        im = zone_crop.copy()
         candidates = []
         contours_kept = []
 
@@ -45,10 +46,9 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
             rect_rotate = cv2.minAreaRect(cnt) 
             w, h = rect_rotate[1]
             rect_area = w * h
-
             if rect_area > TH_ISOLATE_CARDE_WHITEBCK:
                 box = np.int32(cv2.boxPoints(rect_rotate))
-                cv2.drawContours(im, [box], 0, (0, 255, 0), 2)
+                cv2.drawContours(im_with_boxes, [box], 0, (0, 255, 0), 2) # Draw on im_with_boxes
                 candidates.append(rect_rotate)
                 contours_kept.append(cnt) # to discard contours attached to cards from other players (that appear on the border of the region)
         
@@ -65,7 +65,6 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
         #contours = keep_rectangular_contours(contours, epsilon_factor=0.9, min_area=1)
 
         # Step 5 & 6: Filtering and Candidate Extraction
-        im = zone_crop.copy()
         candidates = []
         contours_kept = []
 
@@ -73,10 +72,9 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
             rect_rotate = cv2.minAreaRect(cnt) 
             w, h = rect_rotate[1]
             rect_area = w * h
-
             if rect_area > TH_ISOLATE_CARDE_WHITEBCK and rect_area < threshold:
                 box = np.int32(cv2.boxPoints(rect_rotate))
-                cv2.drawContours(im, [box], 0, (0, 255, 0), 2)
+                cv2.drawContours(im_with_boxes, [box], 0, (0, 255, 0), 2) # Draw on im_with_boxes
                 candidates.append(rect_rotate)
                 contours_kept.append(cnt) # to discard contours attached to cards from other players (that appear on the border of the region)
 
@@ -101,8 +99,8 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
         plt.imshow(contour_canvas)
         plt.axis('off')
         plt.show()
-
-    return candidates, im, contours_kept, mask
+    
+    return candidates, im_with_boxes, contours_kept, mask # Return im_with_boxes instead of im
 
 
 def mask_rectangles(img, rects):
@@ -142,10 +140,12 @@ def isolate_symbol(zone_crop, white_background=True, plot_debug=False, th_min=10
     if zone_crop is None or zone_crop.size == 0:
         return []
 
-    hsv = cv2.cvtColor(zone_crop, cv2.COLOR_RGB2HSV)   
-    
+    hsv = cv2.cvtColor(zone_crop, cv2.COLOR_RGB2HSV)
+    s=hsv[:, :, 1]
+
+    im_with_boxes = zone_crop.copy() # To store the image with drawn boxes
+
     if white_background:
-        s = hsv[:, :, 1]
         _, mask = cv2.threshold(s, 90, 255, cv2.THRESH_BINARY) 
     else: 
         mask = cv2.inRange(hsv, (0, 0, 180), (179, 60, 255))
@@ -157,20 +157,17 @@ def isolate_symbol(zone_crop, white_background=True, plot_debug=False, th_min=10
     contours, _ = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
     
 
-    im = zone_crop.copy()
     candidates = []
     contours_kept = []
 
     for i, cnt in enumerate(contours):
         cnt_smoothen = smooth_contour(cnt, sigma=4)
-
         rect_rotate = cv2.minAreaRect(cnt_smoothen) 
         w, h = rect_rotate[1]
         rect_area = w * h
-
         if rect_area > th_min and rect_area < th_max:
             box = np.int32(cv2.boxPoints(rect_rotate))
-            cv2.drawContours(im, [box], 0, (0, 255, 0), 2)
+            cv2.drawContours(im_with_boxes, [box], 0, (0, 255, 0), 2) # Draw on im_with_boxes
             candidates.append(rect_rotate)
             contours_kept.append(cnt_smoothen) 
 
@@ -194,8 +191,8 @@ def isolate_symbol(zone_crop, white_background=True, plot_debug=False, th_min=10
         plt.imshow(contour_canvas)
         plt.axis('off')
         plt.show()
-
-    return candidates, im, contours_kept, mask
+    
+    return candidates, im_with_boxes, contours_kept, mask # Return im_with_boxes instead of im
 
 
 def smooth_contour(cnt, sigma=3):
@@ -264,3 +261,179 @@ def keep_rectangular_contours(contours, epsilon_factor=0.05, min_area=1000):
             rectangular_cnt.append(cnt)
     
     return rectangular_cnt
+
+#########################################################################
+########################### CLODO #######################################
+#########################################################################
+
+import cv2
+import numpy as np
+
+def fit_rotated_rectangle_mask(image_shape, contour):
+    """
+    Prend un contour et retourne un masque binaire du rectangle orienté
+    qui fitte au mieux dans ce contour.
+    """
+    # Rectangle orienté minimal englobant le contour
+    rect = cv2.minAreaRect(contour)
+    # rect = ((cx, cy), (w, h), angle)
+
+    # Les 4 coins du rectangle
+    box = cv2.boxPoints(rect)
+    box = np.intp(box)
+
+    # Créer le masque
+    mask = np.zeros(image_shape[:2], dtype=np.uint8)
+    cv2.fillPoly(mask, [box], 255)
+
+    return mask, rect, box
+
+
+def process_zone(contours, image_shape, original_image):
+    """
+    Pour chaque contour dans une zone, génère le masque rectangulaire
+    et extrait le patch de la carte.
+    """
+    results = []
+
+    for i, contour in enumerate(contours):
+        # Filtrer les petits contours parasites
+        area = cv2.contourArea(contour)
+        if area < 1000:  # à ajuster selon ta résolution
+            continue
+
+        mask, rect, box = fit_rotated_rectangle_mask(image_shape, contour)
+
+        # Optionnel : extraire le patch redressé (deskewed)
+        (cx, cy), (w, h), angle = rect
+        # Redresser la carte pour avoir un rectangle droit
+        patch = extract_straightened_card(original_image, rect)
+
+        results.append({
+            'mask': mask,
+            'rect': rect,
+            'box': box,
+            'patch': patch
+        })
+
+    return results
+
+
+def extract_straightened_card(image, rect):
+    """
+    Extrait et redresse la carte à partir du rectangle orienté.
+    """
+    (cx, cy), (w, h), angle = rect
+
+    # S'assurer que w > h (carte en paysage)
+    if w < h:
+        w, h = h, w
+        angle += 90
+
+    # Matrice de rotation pour redresser
+    M = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
+    rotated = cv2.warpAffine(image, M, (image.shape[1], image.shape[0]))
+
+    # Découper le rectangle
+    x1 = int(cx - w / 2)
+    y1 = int(cy - h / 2)
+    x2 = int(cx + w / 2)
+    y2 = int(cy + h / 2)
+
+    # Clamp aux bords de l'image
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(image.shape[1], x2), min(image.shape[0], y2)
+
+    patch = rotated[y1:y2, x1:x2]
+    return patch
+
+
+
+
+
+#########################################################################
+########################### TESTS #######################################
+#########################################################################
+
+def test_white_nooverlapp(nb):
+    im_obj = core.image(core.valid_nb(nb))
+    original_im = im_obj.get()
+    zone1, zone2, zone3, zone4, zone0 = zones.extract_zones(original_im)
+    all_zones = [zone0, zone1, zone2, zone3, zone4] # Center first, then players 1-4
+    zone_names = ["Center", "Player 1", "Player 2", "Player 3", "Player 4"]
+
+    all_zone_crops_for_plotting = []
+    zones_with_crops_count = 0
+
+    for i, zone in enumerate(all_zones):
+        # Ensure zone is not empty before processing
+        if zone is None or zone.size == 0:
+            print(f"Zone {zone_names[i]} is empty, skipping.")
+            continue
+
+        # Step 1: Isolate cards (rectangles) within the zone
+        # Set plot_debug=False to avoid intermediate plots from isolate_cards
+        candidates_cards, im_cards_drawn, _, _ = isolate_cards(zone, white_background=True, plot_debug=False, threshold=75000)
+
+        if not candidates_cards:
+            print(f"No cards found in {zone_names[i]}.")
+            continue
+
+        # Step 2: Mask the zone to keep only the detected card areas
+        zone_masked = mask_rectangles(zone, candidates_cards)
+
+        # Step 3: Isolate symbols within the masked card areas
+        # Set plot_debug=False to avoid intermediate plots from isolate_symbol
+        _, im_symbols_drawn, contours_kept_symbols, mask_symbols = isolate_symbol(zone_masked, white_background=True, plot_debug=False, th_min=1900, th_max=40000)
+
+        if not contours_kept_symbols:
+            print(f"No symbols found in {zone_names[i]}.")
+            continue
+
+        # Step 4: Fill the detected symbol contours
+        im_filled_contours = fill_contours(contours_kept_symbols, mask_symbols)
+
+        # Step 5: Crop the filled symbols
+        crops = crop_filled_forms(im_filled_contours, contours_kept_symbols, padding=50)
+
+        if crops:
+            all_zone_crops_for_plotting.append((zone_names[i], crops))
+            zones_with_crops_count += 1
+
+    if not all_zone_crops_for_plotting:
+        print(f"No crops found for image {nb} across all zones.")
+        return 0
+
+    # Determine max columns for consistent plotting
+    max_cols = 0
+    for _, crops_list in all_zone_crops_for_plotting:
+        max_cols = max(max_cols, len(crops_list))
+
+    # Determine spacing for original image (span 3 column units for better aspect ratio)
+    orig_span = 3
+    total_cols = orig_span + max_cols
+
+    # Create the figure with GridSpec to allow the original image to span all rows on the left
+    fig = plt.figure(figsize=(total_cols * 3, zones_with_crops_count * 3))
+    gs = fig.add_gridspec(zones_with_crops_count, total_cols)
+    fig.suptitle(f"Image {nb}: Original Image and Isolated Symbols per Zone", fontsize=16)
+
+    # Plot the original image on the left, spanning all zone rows
+    ax_orig = fig.add_subplot(gs[:, :orig_span])
+    ax_orig.imshow(original_im)
+    ax_orig.set_title("Original Image", fontsize=12)
+    ax_orig.axis('off')
+
+    for row_idx, (zone_name, crops_list) in enumerate(all_zone_crops_for_plotting):
+        for col_idx, crop in enumerate(crops_list):
+            # Start placing crops from the column index equal to orig_span
+            ax = fig.add_subplot(gs[row_idx, col_idx + orig_span])
+            ax.imshow(crop, cmap='gray')
+            ax.axis('off')
+            if col_idx == 0:
+                ax.set_title(zone_name, loc='left', fontsize=10)
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to prevent suptitle overlap
+    plt.show()
+
+    return 0
