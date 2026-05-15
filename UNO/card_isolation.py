@@ -148,13 +148,13 @@ def mask_rectangles(img, rects):
 
 
 def crop_cards_from_zone(zone_to_crop):
+    # zone_to
     gray = cv2.cvtColor(zone_to_crop, cv2.COLOR_BGR2GRAY)
     _, thresh = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     cards = []
     for cnt in contours:
-        rect_rotate = cv2.minAreaRect(cnt) 
         x, y, w, h = [int(v) for v in cv2.boundingRect(cnt)]
         cards.append(zone_to_crop[y:y+h, x:x+w])
 
@@ -374,27 +374,25 @@ def test_isolate_cards(nb, threshold=75000):
     zone1, zone2, zone3, zone4, zone0 = zones.extract_zones(original_im)
     all_zones = [zone0, zone1, zone2, zone3, zone4]
 
-    all_zones_isolated_cards = []
     all_isolated_cards = []
     for zone in all_zones:
         candidates, _, _, _ = isolate_cards(zone, white_background=True, plot_debug=False, threshold=threshold)
         zone_masked = mask_rectangles(zone, candidates)
-        all_isolated_cards.append(crop_cards_from_zone(zone_masked))
-        
 
-        """ zone_masked_hsv = rgb2hsv(zone_masked) # use hsv jsut to show them in shades of gray at the end
-        all_zones_isolated_cards.append(zone_masked_hsv[:, :, 2])"""
-        
+        one_isolated_card = crop_cards_from_zone(zone_masked) # zone_masked is converted into gray scal
 
+        all_isolated_cards.append(one_isolated_card)
+
+    # Display
     fig, axes = plt.subplots(1 + len(all_isolated_cards), 5, figsize=(10, 10))
 
-    # Image originale sur toute la première ligne
+    # Original im
     axes[0, 0].imshow(original_im)
     axes[0, 0].axis('off')
     for j in range(1, 5):
         axes[0, j].axis('off')
 
-    # Cartes par zone
+    # Cartes by zones
     for i, zone_cards in enumerate(all_isolated_cards):
         for j in range(5):
             ax = axes[i + 1, j]
