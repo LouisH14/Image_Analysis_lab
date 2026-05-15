@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import core
 import zones
-
+from skimage.color import rgb2hsv
 from scipy.ndimage import gaussian_filter1d
 
 TH_ISOLATE_CARDE_WHITEBCK = 75000
@@ -28,8 +28,14 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
     im_with_boxes = zone_crop.copy() # To store the image with drawn boxes
 
     if white_background:
-        s = hsv[:, :, 1]
-        _, mask = cv2.threshold(s, 90, 255, cv2.THRESH_BINARY) 
+        """s = hsv[:, :, 1]
+        _, mask = cv2.threshold(s, 90, 255, cv2.THRESH_BINARY) """
+
+        mean=zone_crop.mean(axis=2)
+        mask = (mean < 200) #| (saturation > 20)
+        result = zone_crop.copy()
+        result[~mask] = 0
+        mask = mask.astype(np.uint8) * 255
 
         # Step 3: Morphological Cleanup - bridge gaps in the detected border
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
@@ -42,7 +48,13 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
         candidates = []
         contours_kept = []
 
-        for i, cnt in enumerate(contours):
+        for cnt in contours:
+            epsilon = 0.01 * cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, epsilon, True)
+            if len(approx) <= 6:
+                contours_kept.append(approx)
+
+        """for i, cnt in enumerate(contours):
             rect_rotate = cv2.minAreaRect(cnt) 
             w, h = rect_rotate[1]
             rect_area = w * h
@@ -50,7 +62,7 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
                 box = np.int32(cv2.boxPoints(rect_rotate))
                 cv2.drawContours(im_with_boxes, [box], 0, (0, 255, 0), 2) # Draw on im_with_boxes
                 candidates.append(rect_rotate)
-                contours_kept.append(cnt) # to discard contours attached to cards from other players (that appear on the border of the region)
+                contours_kept.append(cnt) # to discard contours attached to cards from other players (that appear on the border of the region)"""
         
     else: # the background has colorized patterns
         # On patterned backgrounds, white card borders have low saturation and high value
@@ -216,7 +228,7 @@ def crop_filled_forms(image, contours, padding=50):
     crops = []
 
     # Padding so that we can take the bar under the 6 !!
-
+    print(len(contours))
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
         rect_area = w * h
@@ -349,7 +361,18 @@ def extract_straightened_card(image, rect):
 
 
 
+def detect_card_new(img):
 
+    mean = img.mean(axis=2)
+    hsv = rgb2hsv(img)
+    saturation = hsv[:, :, 1]
+
+    mask_final = (mean < 200) #| (saturation > 20)
+
+    result = img.copy()
+    result[~mask_final] = 0
+
+    return result
 
 #########################################################################
 ########################### TESTS #######################################
@@ -393,45 +416,35 @@ def test_white_nooverlapp(nb):
         # Step 4: Fill the detected symbol contours
         im_filled_contours = fill_contours(contours_kept_symbols, mask_symbols)
 
-        # Step 5: Crop the filled symbols
-        crops = crop_filled_forms(im_filled_contours, contours_kept_symbols, padding=50)
-
-        if crops:
-            all_zone_crops_for_plotting.append((zone_names[i], crops))
-            zones_with_crops_count += 1
+        # Collect the filled mask for this zone for vertical stacking
+        all_zone_crops_for_plotting.append((zone_names[i], im_filled_contours))
+        zones_with_crops_count += 1
 
     if not all_zone_crops_for_plotting:
-        print(f"No crops found for image {nb} across all zones.")
+        print(f"No symbols found for image {nb} across all zones.")
         return 0
 
-    # Determine max columns for consistent plotting
-    max_cols = 0
-    for _, crops_list in all_zone_crops_for_plotting:
-        max_cols = max(max_cols, len(crops_list))
+    # Spacing for original image (span 2 column units)
+    orig_span = 2
+    total_cols = orig_span + 1 # Original span + 1 column for the vertical stack
 
-    # Determine spacing for original image (span 3 column units for better aspect ratio)
-    orig_span = 3
-    total_cols = orig_span + max_cols
+    # Create the figure with GridSpec, stacking zones closer by reducing height multiplier and setting hspace
+    fig = plt.figure(figsize=(12, zones_with_crops_count * 2))
+    gs = fig.add_gridspec(zones_with_crops_count, total_cols, hspace=0.3)
+    fig.suptitle(f"Image {nb}: Original and Filled Symbol Masks per Zone", fontsize=16)
 
-    # Create the figure with GridSpec to allow the original image to span all rows on the left
-    fig = plt.figure(figsize=(total_cols * 3, zones_with_crops_count * 3))
-    gs = fig.add_gridspec(zones_with_crops_count, total_cols)
-    fig.suptitle(f"Image {nb}: Original Image and Isolated Symbols per Zone", fontsize=16)
-
-    # Plot the original image on the left, spanning all zone rows
+    # Plot the original image on the left, spanning all rows
     ax_orig = fig.add_subplot(gs[:, :orig_span])
     ax_orig.imshow(original_im)
-    ax_orig.set_title("Original Image", fontsize=12)
+    ax_orig.set_title("Original Image", fontsize=14)
     ax_orig.axis('off')
 
-    for row_idx, (zone_name, crops_list) in enumerate(all_zone_crops_for_plotting):
-        for col_idx, crop in enumerate(crops_list):
-            # Start placing crops from the column index equal to orig_span
-            ax = fig.add_subplot(gs[row_idx, col_idx + orig_span])
-            ax.imshow(crop, cmap='gray')
-            ax.axis('off')
-            if col_idx == 0:
-                ax.set_title(zone_name, loc='left', fontsize=10)
+    # Plot each zone's filled mask in a vertical stack on the right
+    for row_idx, (zone_name, mask_img) in enumerate(all_zone_crops_for_plotting):
+        ax = fig.add_subplot(gs[row_idx, orig_span])
+        ax.imshow(mask_img, cmap='gray')
+        ax.set_title(zone_name, fontsize=12)
+        ax.axis('off')
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to prevent suptitle overlap
     plt.show()
