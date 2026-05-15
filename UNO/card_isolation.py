@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 import core
 import zones
 from skimage.color import rgb2hsv
@@ -28,14 +29,18 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
     im_with_boxes = zone_crop.copy() # To store the image with drawn boxes
 
     if white_background:
-        """s = hsv[:, :, 1]
-        _, mask = cv2.threshold(s, 90, 255, cv2.THRESH_BINARY) """
 
-        mean=zone_crop.mean(axis=2)
-        mask = (mean < 200) #| (saturation > 20)
-        result = zone_crop.copy()
-        result[~mask] = 0
-        mask = mask.astype(np.uint8) * 255
+        # for the colored cards
+        s = hsv[:, :, 1]
+        _, mask_colored = cv2.threshold(s, 90, 255, cv2.THRESH_BINARY)
+
+        # for dark template cards
+        mean = im_with_boxes.mean(axis=2)
+        mask_black = (mean < 100) 
+        mask_black = mask_black.astype(np.uint8) * 255
+
+        # Combinaison des deux masques (UNION)
+        mask = cv2.bitwise_or(mask_colored, mask_black)
 
         # Step 3: Morphological Cleanup - bridge gaps in the detected border
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
@@ -48,13 +53,7 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
         candidates = []
         contours_kept = []
 
-        for cnt in contours:
-            epsilon = 0.01 * cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, epsilon, True)
-            if len(approx) <= 6:
-                contours_kept.append(approx)
-
-        """for i, cnt in enumerate(contours):
+        for i, cnt in enumerate(contours):
             rect_rotate = cv2.minAreaRect(cnt) 
             w, h = rect_rotate[1]
             rect_area = w * h
@@ -62,7 +61,8 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
                 box = np.int32(cv2.boxPoints(rect_rotate))
                 cv2.drawContours(im_with_boxes, [box], 0, (0, 255, 0), 2) # Draw on im_with_boxes
                 candidates.append(rect_rotate)
-                contours_kept.append(cnt) # to discard contours attached to cards from other players (that appear on the border of the region)"""
+                contours_kept.append(cnt) # to discard contours attached to cards from other players (that appear on the border of the region)
+                
         
     else: # the background has colorized patterns
         # On patterned backgrounds, white card borders have low saturation and high value
@@ -278,102 +278,303 @@ def keep_rectangular_contours(contours, epsilon_factor=0.05, min_area=1000):
 ########################### CLODO #######################################
 #########################################################################
 
+"""
+Task 2 — Card Detection in Zone Crops
+======================================
+Given a zone crop (numpy array, BGR) and a zone name, returns a list of
+individual card crops (numpy arrays, BGR) in spatial order.
+
+Pipeline:
+  Step 1  Convert BGR → HSV
+  Step 2  Build Mask A (high saturation) + Mask B (low brightness)
+  Step 3  Combine masks with OR
+  Step 4  Morphological cleanup (closing → opening)
+  Step 5  Contour detection
+  Step 6  Filter by area and aspect ratio
+  Step 7  Non-maximum suppression (deduplicate Wild card detections)
+  Step 8  Crop extraction with padding
+  Step 9  Spatial ordering
+"""
+
 import cv2
 import numpy as np
+from typing import List, Tuple
 
-def fit_rotated_rectangle_mask(image_shape, contour):
+
+# ---------------------------------------------------------------------------
+# Tuneable constants — adjust if camera or lighting conditions change
+# ---------------------------------------------------------------------------
+
+# Step 2 — Mask thresholds
+SAT_MIN = 60          # Mask A: minimum saturation to count as "colored"
+VAL_MAX = 80          # Mask B: maximum brightness to count as "dark / black"
+
+# Step 4 — Morphological parameters
+CLOSE_KSIZE = 55      # Closing kernel size (fills oval gaps inside cards)
+OPEN_KSIZE  = 5       # Opening kernel size (removes small noise blobs)
+
+# Step 6 — Filtering thresholds
+MIN_CARD_AREA   = 3_000    # px² — smaller blobs are corner fragments or noise
+MAX_CARD_AREA   = 120_000  # px² — larger blobs are implausible
+ASPECT_MIN      = 0.45     # width/height — portrait and landscape with tolerance
+ASPECT_MAX      = 2.20
+
+# Step 7 — NMS
+IOU_THRESHOLD = 0.50
+
+# Step 8 — Crop padding
+CROP_PADDING = 4       # pixels added on every side, clamped to zone boundaries
+
+
+# ---------------------------------------------------------------------------
+# Public interface
+# ---------------------------------------------------------------------------
+
+def detect_cards(zone_crop: np.ndarray, zone_name: str) -> List[np.ndarray]:
     """
-    Prend un contour et retourne un masque binaire du rectangle orienté
-    qui fitte au mieux dans ce contour.
+    Detect individual UNO cards in a zone crop.
+
+    Parameters
+    ----------
+    zone_crop : np.ndarray  BGR image (one crop from extract_zones())
+    zone_name : str         One of "player_1", "player_2", "player_3",
+                            "player_4", "center"
+
+    Returns
+    -------
+    List[np.ndarray]  Card crops in BGR, spatially ordered.
+                      Empty list for zones with no cards (EMPTY).
     """
-    # Rectangle orienté minimal englobant le contour
-    rect = cv2.minAreaRect(contour)
-    # rect = ((cx, cy), (w, h), angle)
+    if zone_crop is None or zone_crop.size == 0:
+        return []
 
-    # Les 4 coins du rectangle
-    box = cv2.boxPoints(rect)
-    box = np.intp(box)
+    # Step 1 — BGR → HSV
+    hsv = cv2.cvtColor(zone_crop, cv2.COLOR_BGR2HSV)
 
-    # Créer le masque
-    mask = np.zeros(image_shape[:2], dtype=np.uint8)
-    cv2.fillPoly(mask, [box], 255)
+    # Step 2 — Build masks
+    mask_a = _mask_colored(hsv)
+    mask_b = _mask_dark(hsv)
 
-    return mask, rect, box
+    # Step 3 — Combine
+    combined = cv2.bitwise_or(mask_a, mask_b)
+
+    # Step 4 — Morphological cleanup
+    cleaned = _morphological_cleanup(combined)
+
+    # Step 5 — Contour detection
+    contours, _ = cv2.findContours(
+        cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    # Step 6 — Filter contours → bounding boxes
+    candidates = _filter_contours(contours)
+
+    if not candidates:
+        return []
+
+    # Step 7 — NMS
+    boxes = _non_maximum_suppression(candidates)
+
+    # Step 8 — Crop extraction
+    crops = _extract_crops(zone_crop, boxes)
+
+    # Step 9 — Spatial ordering
+    ordered_crops = _spatial_order(crops, boxes, zone_name)
+
+    return ordered_crops
 
 
-def process_zone(contours, image_shape, original_image):
+# ---------------------------------------------------------------------------
+# Step 2 helpers
+# ---------------------------------------------------------------------------
+
+def _mask_colored(hsv: np.ndarray, sat_min) -> np.ndarray:
+    """Mask A: pixels with high saturation (colored card bodies / Wild oval)."""
+    s = hsv[:, :, 1]
+    _, mask = cv2.threshold(s, sat_min, 255, cv2.THRESH_BINARY)
+    return mask
+
+
+
+def _mask_dark(hsv: np.ndarray, val_max) -> np.ndarray:
+    """Mask B: pixels with low brightness (black card bodies)."""
+    _, _, v = cv2.split(hsv)
+    _, mask = cv2.threshold(v, val_max, 255, cv2.THRESH_BINARY_INV)
+    return mask
+
+
+# ---------------------------------------------------------------------------
+# Step 4
+# ---------------------------------------------------------------------------
+
+def _morphological_cleanup(mask: np.ndarray) -> np.ndarray:
+    """Close holes inside cards, then open away small noise."""
+    close_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (CLOSE_KSIZE, CLOSE_KSIZE)
+    )
+    closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel)
+
+    open_kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (OPEN_KSIZE, OPEN_KSIZE)
+    )
+    opened = cv2.morphologyEx(closed, cv2.MORPH_OPEN, open_kernel)
+
+    return opened
+
+
+# ---------------------------------------------------------------------------
+# Step 5 + 6
+# ---------------------------------------------------------------------------
+
+def _filter_contours(
+    contours: Tuple,
+) -> List[Tuple[int, int, int, int]]:
     """
-    Pour chaque contour dans une zone, génère le masque rectangulaire
-    et extrait le patch de la carte.
+    Return bounding rectangles (x, y, w, h) for contours that pass
+    area and aspect-ratio filters.
     """
-    results = []
-
-    for i, contour in enumerate(contours):
-        # Filtrer les petits contours parasites
-        area = cv2.contourArea(contour)
-        if area < 1000:  # à ajuster selon ta résolution
+    boxes = []
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        area = w * h
+        if area < MIN_CARD_AREA or area > MAX_CARD_AREA:
             continue
-
-        mask, rect, box = fit_rotated_rectangle_mask(image_shape, contour)
-
-        # Optionnel : extraire le patch redressé (deskewed)
-        (cx, cy), (w, h), angle = rect
-        # Redresser la carte pour avoir un rectangle droit
-        patch = extract_straightened_card(original_image, rect)
-
-        results.append({
-            'mask': mask,
-            'rect': rect,
-            'box': box,
-            'patch': patch
-        })
-
-    return results
+        aspect = w / h if h > 0 else 0
+        if not (ASPECT_MIN <= aspect <= ASPECT_MAX):
+            continue
+        boxes.append((x, y, w, h))
+    return boxes
 
 
-def extract_straightened_card(image, rect):
+# ---------------------------------------------------------------------------
+# Step 7 — Non-maximum suppression
+# ---------------------------------------------------------------------------
+
+def _iou(box_a: Tuple, box_b: Tuple) -> float:
+    """Intersection over union for two (x, y, w, h) boxes."""
+    ax1, ay1, aw, ah = box_a
+    bx1, by1, bw, bh = box_b
+    ax2, ay2 = ax1 + aw, ay1 + ah
+    bx2, by2 = bx1 + bw, by1 + bh
+
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+
+    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+    if inter == 0:
+        return 0.0
+
+    union = aw * ah + bw * bh - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _non_maximum_suppression(
+    boxes: List[Tuple[int, int, int, int]],
+) -> List[Tuple[int, int, int, int]]:
+    """Keep only the largest box when two boxes overlap above IOU_THRESHOLD."""
+    # Sort largest area first
+    boxes = sorted(boxes, key=lambda b: b[2] * b[3], reverse=True)
+    kept = []
+    suppressed = [False] * len(boxes)
+
+    for i in range(len(boxes)):
+        if suppressed[i]:
+            continue
+        kept.append(boxes[i])
+        for j in range(i + 1, len(boxes)):
+            if suppressed[j]:
+                continue
+            if _iou(boxes[i], boxes[j]) > IOU_THRESHOLD:
+                suppressed[j] = True
+
+    return kept
+
+
+# ---------------------------------------------------------------------------
+# Step 8
+# ---------------------------------------------------------------------------
+
+def _extract_crops(
+    zone_crop: np.ndarray,
+    boxes: List[Tuple[int, int, int, int]],
+) -> List[np.ndarray]:
+    """Crop each bounding box (+ padding) from the original BGR image."""
+    h_img, w_img = zone_crop.shape[:2]
+    crops = []
+    for x, y, w, h in boxes:
+        x1 = max(0, x - CROP_PADDING)
+        y1 = max(0, y - CROP_PADDING)
+        x2 = min(w_img, x + w + CROP_PADDING)
+        y2 = min(h_img, y + h + CROP_PADDING)
+        crops.append(zone_crop[y1:y2, x1:x2].copy())
+    return crops
+
+
+# ---------------------------------------------------------------------------
+# Step 9 — Spatial ordering
+# ---------------------------------------------------------------------------
+
+def _box_center(box: Tuple[int, int, int, int]) -> Tuple[float, float]:
+    x, y, w, h = box
+    return x + w / 2, y + h / 2
+
+
+def _spatial_order(
+    crops: List[np.ndarray],
+    boxes: List[Tuple[int, int, int, int]],
+    zone_name: str,
+) -> List[np.ndarray]:
+    """Re-order crops according to spatial position in the zone."""
+    if not crops:
+        return []
+
+    paired = list(zip(boxes, crops))
+
+    if zone_name in ("player_1", "player_3"):
+        # Left → right by center x
+        paired.sort(key=lambda p: _box_center(p[0])[0])
+    elif zone_name in ("player_2", "player_4"):
+        # Top → bottom by center y
+        paired.sort(key=lambda p: _box_center(p[0])[1])
+    # "center": single card, no ordering needed
+
+    return [crop for _, crop in paired]
+
+
+# ---------------------------------------------------------------------------
+# Optional debug helper — visualise detections on the zone crop
+# ---------------------------------------------------------------------------
+
+def debug_draw_boxes(
+    zone_crop: np.ndarray,
+    zone_name: str,
+    color: Tuple[int, int, int] = (0, 255, 0),
+    thickness: int = 2,
+) -> np.ndarray:
     """
-    Extrait et redresse la carte à partir du rectangle orienté.
+    Return a copy of the zone crop with detected bounding boxes drawn on it.
+    Useful during development / acceptance testing.
     """
-    (cx, cy), (w, h), angle = rect
+    vis = zone_crop.copy()
+    # Re-run the internal steps to get raw boxes
+    hsv = cv2.cvtColor(zone_crop, cv2.COLOR_BGR2HSV)
+    combined = cv2.bitwise_or(_mask_colored(hsv), _mask_dark(hsv))
+    cleaned  = _morphological_cleanup(combined)
+    contours, _ = cv2.findContours(
+        cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    candidates = _filter_contours(contours)
+    boxes      = _non_maximum_suppression(candidates)
 
-    # S'assurer que w > h (carte en paysage)
-    if w < h:
-        w, h = h, w
-        angle += 90
-
-    # Matrice de rotation pour redresser
-    M = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
-    rotated = cv2.warpAffine(image, M, (image.shape[1], image.shape[0]))
-
-    # Découper le rectangle
-    x1 = int(cx - w / 2)
-    y1 = int(cy - h / 2)
-    x2 = int(cx + w / 2)
-    y2 = int(cy + h / 2)
-
-    # Clamp aux bords de l'image
-    x1, y1 = max(0, x1), max(0, y1)
-    x2, y2 = min(image.shape[1], x2), min(image.shape[0], y2)
-
-    patch = rotated[y1:y2, x1:x2]
-    return patch
-
-
-
-def detect_card_new(img):
-
-    mean = img.mean(axis=2)
-    hsv = rgb2hsv(img)
-    saturation = hsv[:, :, 1]
-
-    mask_final = (mean < 200) #| (saturation > 20)
-
-    result = img.copy()
-    result[~mask_final] = 0
-
-    return result
-
+    for i, (x, y, w, h) in enumerate(boxes):
+        cv2.rectangle(vis, (x, y), (x + w, y + h), color, thickness)
+        cv2.putText(
+            vis, str(i), (x + 4, y + 20),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2
+        )
+    return vis
 #########################################################################
 ########################### TESTS #######################################
 #########################################################################
@@ -449,4 +650,38 @@ def test_white_nooverlapp(nb):
     plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to prevent suptitle overlap
     plt.show()
 
+    return 0
+
+
+def test_isolate_cards(nb):
+    im_obj = core.image(core.valid_nb(nb))
+    original_im = im_obj.get()
+
+    zone1, zone2, zone3, zone4, zone0 = zones.extract_zones(original_im)
+    all_zones = [zone0, zone1, zone2, zone3, zone4]
+
+    all_zones_isolated_cards = []
+    for zone in all_zones:
+        candidates, _, _, _ = isolate_cards(zone, white_background=True, plot_debug=False, threshold=75000)
+        zone_masked = mask_rectangles(zone, candidates)
+
+        zone_masked_hsv = rgb2hsv(zone_masked) # use hsv jsut to show them in shades of gray at the end
+        all_zones_isolated_cards.append(zone_masked_hsv[:, :, 2])
+
+
+    # grid creation
+    fig = plt.figure(figsize=(10, 10))
+    gs = gridspec.GridSpec(6, 1)
+    
+    # left : original im
+    fig.add_subplot(gs[0, 0]).imshow(original_im)
+    fig.add_subplot(gs[0, 0]).axis('off')
+
+    # right : the stack of all zones
+    for i,zone in enumerate(all_zones_isolated_cards):
+        fig.add_subplot(gs[i+1, 0]).imshow(zone, cmap='gray')
+        fig.add_subplot(gs[i+1, 0]).axis('off')
+
+    plt.tight_layout()
+    plt.show()
     return 0
