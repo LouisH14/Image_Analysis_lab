@@ -10,7 +10,7 @@ from scipy.ndimage import gaussian_filter1d
 TH_ISOLATE_CARDE_WHITEBCK = 75000
 TH_ISOLATE_CARDE_NOISYBCK = 220000
 
-def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=75000):
+def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=75000, x_max = 1300):
     """
     Detects individual UNO cards using a custom 7-step method.
 
@@ -49,16 +49,22 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
         # Step 4: Contour Detection
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+        # To get rid of all contours with at least x >= 1300
+        # contours_filtres = [c for c in contours if not np.any(c[:, :, 0] >= x_max)]
+
         # Step 5 & 6: Filtering and Candidate Extraction
         candidates = []
         contours_kept = []
+        boxes = []
 
         for i, cnt in enumerate(contours):
+            print(i)
             rect_rotate = cv2.minAreaRect(cnt) 
             w, h = rect_rotate[1]
             rect_area = w * h
             if rect_area > threshold:
                 box = np.int32(cv2.boxPoints(rect_rotate))
+                boxes.append(box)
                 cv2.drawContours(im_with_boxes, [box], 0, (0, 255, 0), 2) # Draw on im_with_boxes
                 candidates.append(rect_rotate)
                 contours_kept.append(cnt) # to discard contours attached to cards from other players (that appear on the border of the region)
@@ -112,7 +118,7 @@ def isolate_cards(zone_crop, white_background=True, plot_debug=False, threshold=
         plt.axis('off')
         plt.show()
     
-    return candidates, im_with_boxes, contours_kept, mask # Return im_with_boxes instead of im
+    return candidates, im_with_boxes, contours_kept, mask, boxes # Return im_with_boxes instead of im
 
 
 def mask_rectangles(img, rects):
@@ -404,3 +410,5 @@ def test_isolate_cards(nb, threshold=75000):
     plt.show()
 
     return 0
+
+
