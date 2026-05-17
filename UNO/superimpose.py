@@ -117,9 +117,13 @@ def get_mean_color(image, mask):
     Returns:
         tuple: The mean (Blue, Green, Red) color components.
     """
-    # cv2.mean returns a 4-element tuple (B, G, R, alpha)
-    mean_values = cv2.mean(image, mask=mask)
-    return mean_values[:3]
+
+    bright_mask = np.all(image > 200, axis=2)  # True if 3 channels >200
+    exclude_mask = (~bright_mask).astype(np.uint8) * 255  # 8just invert so keep only non-shite pixels
+
+    combined_mask = cv2.bitwise_and(mask, exclude_mask)
+    mean_values = cv2.mean(image, mask=combined_mask)
+    return mean_values[:3] # cv2.mean returns a 4-element tuple (B, G, R, alpha)
 
 def classify_color(mean_bgr):
     """
@@ -134,11 +138,11 @@ def classify_color(mean_bgr):
     # Reference BGR values for typical UNO card colors. 
     # These may require fine-tuning based on your specific camera's white balance.
     reference_colors = {
-        "RED":    np.array([50, 50, 200]),
+        "RED":    np.array([144, 157, 240]),
         "BLUE":   np.array([200, 50, 50]),
-        "GREEN":  np.array([90, 200, 110]),
+        "GREEN":  np.array([100, 190, 120]),
         "YELLOW": np.array([50, 210, 250]),
-        "BLACK":  np.array([150, 150, 160])
+        "BLACK":  np.array([120, 110, 107])
     }
 
     measured = np.array(mean_bgr)
@@ -155,25 +159,16 @@ def classify_color(mean_bgr):
 
 
 def get_corners_from_contours(contours):
-    """
-    Computes the 4 corner points of the minimal rotated rectangle 
-    that encloses all the points in the provided list of contours.
-
-    Args:
-        contours (list): A list of numpy arrays (contours).
-
-    Returns:
-        np.ndarray: A (4, 2) array of corner points (sorted TL, TR, BR, BL).
-    """
     if contours is None or len(contours) == 0:
         return None
-    # Flatten the list of contours into a single array of points
-    all_pts = np.vstack(contours)
-    # Compute the minimal area rotated rectangle
+    if isinstance(contours, np.ndarray):
+        all_pts = contours  # déjà un seul array
+    else:
+        all_pts = np.vstack(contours)  # liste de contours
     rect = cv2.minAreaRect(all_pts)
-    # Get the 4 corner points and sort them
     box = np.round(cv2.boxPoints(rect)).astype(np.int32)
     return order_points(box)
+
 
 def run_visual_test(mask_contours, mask_corners, ref_X, ref_Y):
     """
@@ -274,4 +269,3 @@ def test_on_real_data(img_with_card, target_corners, mask_contours, ref_X, ref_Y
     plt.show()
     
     return color_result, norm_mask
-
