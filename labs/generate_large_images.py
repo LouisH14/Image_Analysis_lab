@@ -19,6 +19,9 @@ from PIL import Image
 CANVAS_W = 4000
 CANVAS_H = 2662
 
+# if True : final image appears in grayscale AND the names do not contain any mention of the color anymore
+MAKE_GRAYSCALE = True
+
 
 def load_source_images(src_dir: Path):
     exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
@@ -53,6 +56,7 @@ def generate_one(
     seed=None,
     out_name_prefix=None,
     bg_color: str = "#cdced2",
+    token_image: Path = None,
 ):
     if seed is not None:
         random.seed(seed + (hash(out_name_prefix) & 0xFFFFFFFF))
@@ -77,6 +81,30 @@ def generate_one(
 
         canvas.paste(rotated, pos, rotated)
         records.append((src.name, pos[0], pos[1], round(angle, 3)))
+    
+    
+    # Paste token image if provided
+    if token_image and token_image.exists():
+        if token_image.is_dir():
+            # If it's a directory, pick one image randomly from it
+            possible_tokens = load_source_images(token_image)
+            actual_token = random.choice(possible_tokens) if possible_tokens else None
+        else:
+            actual_token = token_image
+
+        if actual_token:
+            sp_im = Image.open(actual_token).convert("RGBA")
+            # For the token image, we use a fixed 0 degree rotation for now
+            angle = 0.0
+            pos = choose_position(CANVAS_W, CANVAS_H, sp_im.width, sp_im.height)
+            if pos is None:
+                pos = (0, 0)
+            
+            canvas.paste(sp_im, pos, sp_im)
+            records.append((actual_token.name, pos[0], pos[1], round(angle, 3)))
+
+    if MAKE_GRAYSCALE:
+        canvas = canvas.convert("L")
 
     timestamp = int(time.time())
     if out_name_prefix:
@@ -91,16 +119,24 @@ def generate_one(
 
 
 def main():
+    # Calculate the project root directory (one level up from this script's directory)
+    project_root = Path(__file__).resolve().parent.parent
+    
+    # Define paths relative to the project root
+    src_path = project_root / "data" / "images_crop" 
+    token_path = project_root / "data" / "tokens" 
+    dest_path = project_root / "data" / "images_generated_with_token"
+
     p = argparse.ArgumentParser(
         description="Générer des images 4000x2662 à partir de crops"
     )
     p.add_argument(
         "--src_dir",
-        default="data/images_crop",
+        default=src_path,
         help="Dossier source des images à coller",
     )
-    p.add_argument("--out_dir", default="data/images_generee", help="Dossier de sortie")
-    p.add_argument("--count", type=int, default=50, help="Nombre d'images générées")
+    p.add_argument("--out_dir", default=dest_path, help="Dossier de sortie")
+    p.add_argument("--count", type=int, default=3, help="Nombre d'images générées")
     p.add_argument(
         "--per_image",
         type=int,
@@ -111,6 +147,7 @@ def main():
     p.add_argument(
         "--bg_color", default="#cdced2", help="Couleur de fond hex (ex: #cdced2)"
     )
+    p.add_argument("--token_image", type=str, default=token_path, help="Chemin vers une image spéciale à inclure systématiquement")
     args = p.parse_args()
 
     src_dir = Path(args.src_dir)
@@ -121,6 +158,8 @@ def main():
     if not images:
         print(f"Aucune image trouvée dans {src_dir}.")
         return
+
+    token_image_path = Path(args.token_image) if args.token_image else None
 
     timestamp_all = int(time.time())
     csv_path = out_dir / f"placements_{timestamp_all}.csv"
@@ -139,9 +178,15 @@ def main():
                 seed=args.seed,
                 out_name_prefix=prefix,
                 bg_color=args.bg_color,
+                token_image=token_image_path,
             )
             for r in records:
-                writer.writerow([img_path.name, r[0], r[1], r[2], r[3]])
+                filename = r[0]
+                # If filtering is enabled and name matches pattern (e.g., 'A_image.png'), strip the prefix
+                if MAKE_GRAYSCALE and len(filename) >= 2 and filename[0].isalpha() and filename[1] == '_':
+                    filename = filename[2:]
+                
+                writer.writerow([img_path.name, filename, r[1], r[2], r[3]])
             print(f"Wrote {img_path}")
     print(f"Placements CSV: {csv_path}")
 
