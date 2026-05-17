@@ -212,7 +212,7 @@ def run_visual_test(mask_contours, mask_corners, ref_X, ref_Y):
     plt.tight_layout()
     plt.show()
 
-def test_on_real_data(img_with_card, target_corners, mask_contours, ref_X, ref_Y):
+def test_on_real_data(img_with_card, target_corners, mask_contours):
     """
     Complete test pipeline using real data parameters.
     
@@ -234,6 +234,8 @@ def test_on_real_data(img_with_card, target_corners, mask_contours, ref_X, ref_Y
     # This creates the standard 200x300 template
     print("1. Creating normalized template...")
     mask_corners = get_corners_from_contours(mask_contours)
+    ref_Y = img_with_card.shape[0]
+    ref_X = img_with_card.shape[1]
     norm_mask = create_normalized_mask(
         mask_contours, 
         mask_corners, 
