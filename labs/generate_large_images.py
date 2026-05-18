@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Génère des images 4000x2662 en plaçant aléatoirement images
-depuis `data/images_crop`. Fond uni (hex) par défaut `#cdced2`.
+Génère des images 4000x2662 en plaçant aléatoirement des images
+depuis `data/images_crop`. Alterne 50/50 entre un fond uni (hex)
+et un fond image depuis `data/colorfull_background`.
 Enregistre chaque grande image dans `data/images_generee/` et écrit
 un CSV global `placements_TIMESTAMP.csv` listant tous les placements.
 
@@ -18,9 +19,7 @@ from PIL import Image
 
 CANVAS_W = 4000
 CANVAS_H = 2662
-
-# if True : final image appears in grayscale AND the names do not contain any mention of the color anymore
-MAKE_GRAYSCALE = True
+BACKGROUND_IMAGE_PROBABILITY = 0.5
 
 
 def load_source_images(src_dir: Path):
@@ -56,19 +55,32 @@ def generate_one(
     seed=None,
     out_name_prefix=None,
     bg_color: str = "#cdced2",
+    bg_images=None,
+    make_grayscale: bool = False,
     token_image: Path = None,
 ):
     if seed is not None:
         random.seed(seed + (hash(out_name_prefix) & 0xFFFFFFFF))
 
-    rgb = _hex_to_rgb(bg_color) if bg_color else (205, 206, 210)
-    canvas = Image.new("RGBA", (CANVAS_W, CANVAS_H), (rgb[0], rgb[1], rgb[2], 255))
+    use_bg_image = bool(bg_images) and random.random() < BACKGROUND_IMAGE_PROBABILITY
+    if use_bg_image:
+        bg_path = random.choice(bg_images)
+        with Image.open(bg_path) as bg_im:
+            canvas = (
+                bg_im.convert("RGB")
+                .resize((CANVAS_W, CANVAS_H), resample=Image.LANCZOS)
+                .convert("RGBA")
+            )
+    else:
+        rgb = _hex_to_rgb(bg_color) if bg_color else (205, 206, 210)
+        canvas = Image.new("RGBA", (CANVAS_W, CANVAS_H), (rgb[0], rgb[1], rgb[2], 255))
 
     records = []
 
     for i in range(num_paste):
         src = random.choice(images)
-        im = Image.open(src).convert("RGBA")
+        with Image.open(src) as im:
+            im = im.convert("RGBA")
         angle = random.uniform(0, 360)
 
         rotated = im.rotate(angle, expand=True, resample=Image.BICUBIC)
@@ -93,7 +105,8 @@ def generate_one(
             actual_token = token_image
 
         if actual_token:
-            sp_im = Image.open(actual_token).convert("RGBA")
+            with Image.open(actual_token) as sp_im:
+                sp_im = sp_im.convert("RGBA")
             # For the token image, we use a fixed 0 degree rotation for now
             angle = 0.0
             pos = choose_position(CANVAS_W, CANVAS_H, sp_im.width, sp_im.height)
@@ -103,7 +116,7 @@ def generate_one(
             canvas.paste(sp_im, pos, sp_im)
             records.append((actual_token.name, pos[0], pos[1], round(angle, 3)))
 
-    if MAKE_GRAYSCALE:
+    if make_grayscale:
         canvas = canvas.convert("L")
 
     timestamp = int(time.time())
@@ -124,6 +137,7 @@ def main():
     
     # Define paths relative to the project root
     src_path = project_root / "data" / "images_crop" 
+    bg_path = project_root / "data" / "colorfull_background"
     token_path = project_root / "data" / "tokens" 
     dest_path = project_root / "data" / "images_generated_with_token"
 
@@ -147,7 +161,22 @@ def main():
     p.add_argument(
         "--bg_color", default="#cdced2", help="Couleur de fond hex (ex: #cdced2)"
     )
-    p.add_argument("--token_image", type=str, default=token_path, help="Chemin vers une image spéciale à inclure systématiquement")
+    p.add_argument(
+        "--bg_dir",
+        default=bg_path,
+        help="Dossier des images de fond colorées (tirage 50/50 avec le fond uni)",
+    )
+    p.add_argument(
+        "--grayscale",
+        action="store_true",
+        help="Convertir l'image finale en niveaux de gris",
+    )
+    p.add_argument(
+        "--token_image",
+        type=str,
+        default=token_path,
+        help="Chemin vers une image spéciale à inclure systématiquement",
+    )
     args = p.parse_args()
 
     src_dir = Path(args.src_dir)
@@ -158,6 +187,10 @@ def main():
     if not images:
         print(f"Aucune image trouvée dans {src_dir}.")
         return
+
+    bg_images = load_source_images(Path(args.bg_dir))
+    if not bg_images:
+        print(f"Aucune image de fond trouvée dans {args.bg_dir}.")
 
     token_image_path = Path(args.token_image) if args.token_image else None
 
@@ -178,12 +211,14 @@ def main():
                 seed=args.seed,
                 out_name_prefix=prefix,
                 bg_color=args.bg_color,
+                bg_images=bg_images,
+                make_grayscale=args.grayscale,
                 token_image=token_image_path,
             )
             for r in records:
                 filename = r[0]
                 # If filtering is enabled and name matches pattern (e.g., 'A_image.png'), strip the prefix
-                if MAKE_GRAYSCALE and len(filename) >= 2 and filename[0].isalpha() and filename[1] == '_':
+                if args.grayscale and len(filename) >= 2 and filename[0].isalpha() and filename[1] == '_':
                     filename = filename[2:]
                 
                 writer.writerow([img_path.name, filename, r[1], r[2], r[3]])
