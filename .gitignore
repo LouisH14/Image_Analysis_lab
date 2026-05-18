@@ -3,7 +3,7 @@
 *.svg
 
 # Ignore all files in part_02 (if not needed)
-data/data_lab_03/part_02/
+data/
 
 # Ignore Python cache files
 __pycache__/
